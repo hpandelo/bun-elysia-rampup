@@ -1,12 +1,13 @@
-import { Context, Elysia, ValidationError } from "elysia";
-import { openapi, fromTypes } from "@elysiajs/openapi";
-import { cors } from "@elysiajs/cors";
-import { usersRoutes } from "@/modules";
-import { elysiaHelmet } from 'elysiajs-helmet'
-
+import { Elysia, ValidationError } from 'elysia';
+import { openapi, fromTypes } from '@elysiajs/openapi';
+import { cors } from '@elysiajs/cors';
+import { usersRoutes } from '@/modules';
+import { elysiaHelmet } from 'elysiajs-helmet';
+import { clerkClient, clerkPlugin } from 'elysia-clerk';
+import { clerkResolver } from './middlewares/auth/clerk.resolver';
 
 export const app = new Elysia({
-  prefix: '/api/v1'
+  prefix: '/api/v1',
 });
 
 app
@@ -19,41 +20,56 @@ app
   .derive(({ request }) => ({
     ip: request.headers.get('x-forwarded-for') || '127.0.0.1',
     userAgent: request.headers.get('user-agent') || 'unknown',
-    startTime: Date.now()
+    startTime: Date.now(),
   }))
   .onAfterResponse(({ request, ip, userAgent, startTime }) => {
     const timestamp = new Date().toLocaleString('sv-SE', { hour12: false });
-    console.log(`${timestamp} <- ${request.method} by ${ip || 'elysia'} (${userAgent}) to ${request.url} in ${Date.now() - startTime}ms`);
-  });
+    console.log(
+      `${timestamp} <- ${request.method} by ${ip || 'elysia'} (${userAgent}) to ${request.url} in ${
+        Date.now() - startTime
+      }ms`,
+    );
+  })
+  .decorate('clerk', clerkClient)
+  .resolve(clerkResolver);
 
 app.onError(({ error, status }) => {
   if (error instanceof ValidationError) {
     return status(422, error.valueError);
   }
 
+  if (error instanceof ClerkAPIResponseError) {
+    return status(error.status, error.message);
+  }
+
   return status(500, 'Internal Server Error');
-})
+});
+
+// Register Clerk Plugin
+app.use(clerkPlugin());
 
 // Register OpenAPI Generator
-app.use(openapi({
-  enabled: true, // Can be disabled if isProduction (like DOPPLER_ENV !== 'production' || INFISICAL similar)
-  path: '/openapi',
-  references: fromTypes(
-    process.env.NODE_ENV === 'production'
-      ? 'dist/index.d.ts'
-      : 'src/index.ts'
-  )
-}));
+app.use(
+  openapi({
+    enabled: true, // Can be disabled if isProduction (like DOPPLER_ENV !== 'production' || INFISICAL similar)
+    path: '/openapi',
+    references: fromTypes(
+      process.env.NODE_ENV === 'production' ? 'dist/index.d.ts' : 'src/index.ts',
+    ),
+  }),
+);
 
 // Register Helmet
 // https://www.npmjs.com/package/elysiajs-helmet
-app.use(elysiaHelmet({}))
+app.use(elysiaHelmet({}));
 
 // Register CORS
 // https://www.npmjs.com/package/@elysiajs/cors
-app.use(cors({
-    origin: ({}) => true
-}));
+app.use(
+  cors({
+    origin: ({}) => true,
+  }),
+);
 
 app.get('/', () => 'Aowwwba Mundão véio sem porteiraa!');
 
